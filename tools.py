@@ -21,6 +21,43 @@ _SCOPES = ["https://analysis.windows.net/powerbi/api/.default"]
 # Cached token — reused across calls until it expires
 _token_cache: dict = {}
 
+# Cached MSAL app + flow for device code — reused when user clicks confirm
+_device_flow_state: dict = {}
+
+
+class DeviceLoginRequired(Exception):
+    """
+    Raised when device code auth is needed.
+    Carries the login URL and user code so the UI can display them.
+    The UI should show these to the user, then call complete_device_login()
+    once the user confirms they've logged in.
+    """
+    def __init__(self, verification_url: str, user_code: str):
+        self.verification_url = verification_url
+        self.user_code = user_code
+        super().__init__(f"Visit {verification_url} and enter code: {user_code}")
+
+
+def complete_device_login() -> bool:
+    """
+    Call this after the user has completed the browser login.
+    Exchanges the pending device flow for a real access token.
+    Returns True on success, False if the flow has expired.
+    """
+    if not _device_flow_state.get("app") or not _device_flow_state.get("flow"):
+        return False
+
+    app = _device_flow_state["app"]
+    flow = _device_flow_state["flow"]
+
+    result = app.acquire_token_by_device_flow(flow)
+    if "access_token" in result:
+        _token_cache["access_token"] = result["access_token"]
+        _token_cache["method"] = "device"
+        _device_flow_state.clear()
+        return True
+    return False
+
 
 def _get_token() -> str:
     """
@@ -64,7 +101,7 @@ def _get_token() -> str:
             _PUBLIC_CLIENT_ID,
             authority="https://login.microsoftonline.com/common",
         )
-        # Try silent first (uses cached token from a previous login)
+        # Try silent first (reuse a previously cached token)
         accounts = app.get_accounts()
         if accounts:
             result = app.acquire_token_silent(_SCOPES, account=accounts[0])
@@ -72,18 +109,19 @@ def _get_token() -> str:
                 _token_cache.update({"access_token": result["access_token"], "method": auth_method})
                 return result["access_token"]
 
-        # Interactive device code flow
+        # Start device code flow and raise — the UI will show the link to user
         flow = app.initiate_device_flow(scopes=_SCOPES)
         if "user_code" not in flow:
             raise RuntimeError(f"Device flow failed: {flow.get('error_description')}")
 
-        print("\n" + "=" * 60)
-        print("Power BI Login Required")
-        print("=" * 60)
-        print(flow["message"])  # prints the URL + code to the console/UI
-        print("=" * 60 + "\n")
+        # Store app + flow so complete_device_login() can finish it later
+        _device_flow_state["app"] = app
+        _device_flow_state["flow"] = flow
 
-        result = app.acquire_token_by_device_flow(flow)  # blocks until user logs in
+        raise DeviceLoginRequired(
+            verification_url=flow["verification_uri"],
+            user_code=flow["user_code"],
+        )
 
     # ── Method 3: Azure AD App Secret (original) ────────────────────────────
     elif auth_method == "app":
