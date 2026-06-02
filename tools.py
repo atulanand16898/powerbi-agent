@@ -21,40 +21,32 @@ _SCOPES = ["https://analysis.windows.net/powerbi/api/.default"]
 # Cached token — reused across calls until it expires
 _token_cache: dict = {}
 
-# Cached MSAL app + flow for device code — reused when user clicks confirm
-_device_flow_state: dict = {}
-
 
 class DeviceLoginRequired(Exception):
     """
     Raised when device code auth is needed.
-    Carries the login URL and user code so the UI can display them.
-    The UI should show these to the user, then call complete_device_login()
-    once the user confirms they've logged in.
+    Carries the login URL, user code, AND the live flow dict so the UI can
+    store them in st.session_state and complete the login after the user
+    finishes in the browser.
     """
-    def __init__(self, verification_url: str, user_code: str):
+    def __init__(self, verification_url: str, user_code: str, app, flow: dict):
         self.verification_url = verification_url
         self.user_code = user_code
+        self.msal_app = app    # live MSAL PublicClientApplication
+        self.msal_flow = flow  # live flow dict needed to exchange the code
         super().__init__(f"Visit {verification_url} and enter code: {user_code}")
 
 
-def complete_device_login() -> bool:
+def complete_device_login(msal_app, msal_flow: dict) -> bool:
     """
-    Call this after the user has completed the browser login.
-    Exchanges the pending device flow for a real access token.
-    Returns True on success, False if the flow has expired.
+    Call this after the user has completed browser login.
+    Pass the msal_app and msal_flow stored in st.session_state.
+    Returns True on success.
     """
-    if not _device_flow_state.get("app") or not _device_flow_state.get("flow"):
-        return False
-
-    app = _device_flow_state["app"]
-    flow = _device_flow_state["flow"]
-
-    result = app.acquire_token_by_device_flow(flow)
+    result = msal_app.acquire_token_by_device_flow(msal_flow)
     if "access_token" in result:
         _token_cache["access_token"] = result["access_token"]
         _token_cache["method"] = "device"
-        _device_flow_state.clear()
         return True
     return False
 
@@ -109,18 +101,17 @@ def _get_token() -> str:
                 _token_cache.update({"access_token": result["access_token"], "method": auth_method})
                 return result["access_token"]
 
-        # Start device code flow and raise — the UI will show the link to user
+        # Start device code flow — raise with app+flow attached so the UI
+        # can store them in st.session_state (survives Streamlit reruns)
         flow = app.initiate_device_flow(scopes=_SCOPES)
         if "user_code" not in flow:
             raise RuntimeError(f"Device flow failed: {flow.get('error_description')}")
 
-        # Store app + flow so complete_device_login() can finish it later
-        _device_flow_state["app"] = app
-        _device_flow_state["flow"] = flow
-
         raise DeviceLoginRequired(
             verification_url=flow["verification_uri"],
             user_code=flow["user_code"],
+            app=app,
+            flow=flow,
         )
 
     # ── Method 3: Azure AD App Secret (original) ────────────────────────────

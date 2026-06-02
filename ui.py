@@ -55,6 +55,11 @@ def _init_state():
         st.session_state.device_login_url = ""
     if "device_login_code" not in st.session_state:
         st.session_state.device_login_code = ""
+    # Store live MSAL objects here — survives Streamlit reruns
+    if "msal_app" not in st.session_state:
+        st.session_state.msal_app = None
+    if "msal_flow" not in st.session_state:
+        st.session_state.msal_flow = None
     # Retry the original message after login completes
     if "pending_user_message" not in st.session_state:
         st.session_state.pending_user_message = ""
@@ -131,7 +136,10 @@ if st.session_state.device_login_pending:
         st.markdown("&nbsp;")  # vertical spacer
         if st.button("✅  I've logged in", type="primary", use_container_width=True):
             with st.spinner("Completing login…"):
-                success = complete_device_login()
+                success = complete_device_login(
+                    st.session_state.msal_app,
+                    st.session_state.msal_flow,
+                )
             if success:
                 st.session_state.device_login_pending = False
                 st.success("Logged in to Power BI!")
@@ -213,6 +221,9 @@ if user_input:
             st.session_state.device_login_pending = True
             st.session_state.device_login_url = e.verification_url
             st.session_state.device_login_code = e.user_code
+            # Store live MSAL objects so complete_device_login() works after rerun
+            st.session_state.msal_app = e.msal_app
+            st.session_state.msal_flow = e.msal_flow
             st.session_state.pending_user_message = user_input
             # Remove the user message we just added (will be re-sent after login)
             st.session_state.display_messages.pop()
