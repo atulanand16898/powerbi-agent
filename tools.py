@@ -45,8 +45,16 @@ def complete_device_login(msal_app, msal_flow: dict) -> bool:
     """
     result = msal_app.acquire_token_by_device_flow(msal_flow)
     if "access_token" in result:
-        _token_cache["access_token"] = result["access_token"]
+        token = result["access_token"]
+        # Store in module cache (fast path for same process)
+        _token_cache["access_token"] = token
         _token_cache["method"] = "device"
+        # ALSO store in st.session_state — survives Streamlit reruns
+        try:
+            import streamlit as st
+            st.session_state["powerbi_token"] = token
+        except Exception:
+            pass
         return True
     return False
 
@@ -66,7 +74,16 @@ def _get_token() -> str:
 
     auth_method = get("POWERBI_AUTH", "device").lower()
 
-    # Return cached token if still valid
+    # 1. Check st.session_state first — persists across Streamlit reruns
+    try:
+        import streamlit as st
+        token = st.session_state.get("powerbi_token")
+        if token:
+            return token
+    except Exception:
+        pass
+
+    # 2. Fall back to module-level cache (same process, non-Streamlit use)
     if _token_cache.get("access_token") and _token_cache.get("method") == auth_method:
         return _token_cache["access_token"]
 
