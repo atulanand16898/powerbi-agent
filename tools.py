@@ -371,5 +371,7 @@ def execute_tool(name: str, tool_input: dict) -> str:
         else:
             return f"Unknown tool: {name}"
 
+    except DeviceLoginRequired:
+        raise  # Must propagate to ui.py — do NOT convert to a string
     except Exception as exc:
         return f"Tool error ({name}): {exc}"
