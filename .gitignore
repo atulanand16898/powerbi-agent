@@ -1,0 +1,16 @@
+# Secrets — never commit these
+.env
+
+# Sessions saved locally
+sessions/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Streamlit local config
+.streamlit/secrets.toml
