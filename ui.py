@@ -195,6 +195,13 @@ if user_input:
         import tools as tools_module
         original_execute = tools_module.execute_tool
 
+        # Re-inject the Power BI token into the module cache before every call.
+        # st.session_state survives reruns; the module-level dict may not on Cloud.
+        _pbi_token = st.session_state.get("powerbi_token", "")
+        if _pbi_token:
+            tools_module._token_cache["access_token"] = _pbi_token
+            tools_module._token_cache["method"] = "device"
+
         def _tracked_execute(name, tool_input):
             tools_used.append(name)
             return original_execute(name, tool_input)
